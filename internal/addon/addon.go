@@ -3,19 +3,22 @@
 //
 // It uses only the standard library and only the add-on's standard input and
 // output, so a program built on it also builds for GOOS=wasip1 GOARCH=wasm.
+// A WebAssembly module is one thread: a goroutine blocked reading standard
+// input would stop the whole module. So nothing here reads in the background:
+// whoever needs a frame (Next, or a request waiting for its answer) reads it
+// itself, one at a time, and a frame meant for someone else is handed over.
 //
 // The shape of a program:
 //
 //	c := addon.Dial(os.Stdin, os.Stdout, logger)
 //	c.Hello(ctx, "my-addon", []string{"playback.read"})
 //	c.Subscribe(ctx, "now-playing")
-//	for m := range c.Messages() { ... }   // ends when Sona closes the channel
+//	for { m, ok := c.Next(); if !ok { break }; ... }  // ends when Sona closes the channel
 //
-// A reader goroutine takes every frame off the channel at once, so a request
-// (Hello, Subscribe, Secret, Call) can be made from any goroutine, including
-// the one that handles messages. Events and invokes wait in an unbounded
-// queue: Sona keeps at most the newest event of each topic and at most four
-// invokes in flight, so the queue stays small.
+// Requests (Hello, Subscribe, Secret, Call) may also be made from other
+// goroutines in a native program: while one goroutine reads, the others wait
+// for their frame. Do not wait on a timer in a program meant to run as
+// WebAssembly while it waits for Sona.
 package addon
 
 import (
@@ -147,62 +150,77 @@ type frame struct {
 
 // Conn is one session with Sona.
 type Conn struct {
+	r   *bufio.Reader
 	w   io.Writer
 	wmu sync.Mutex // one frame at a time
 	log *log.Logger
 
 	mu      sync.Mutex
+	cond    *sync.Cond
+	reading bool // a goroutine is reading standard input
+	closed  bool // the channel ended
 	next    int64
-	pending map[int64]chan frame
-	closed  bool
-
-	qmu   sync.Mutex
-	cond  *sync.Cond
-	queue []Message
-	done  bool
-	out   chan Message
+	waiting map[int64]bool  // requests sent, not yet answered
+	answers map[int64]frame // answers that came, not yet taken
+	queue   []Message       // events and invokes, in order
 }
 
-// Dial starts reading r (the add-on's standard input) and writes to w (its
+// Dial starts a session on r (the add-on's standard input) and w (its
 // standard output). The log goes to standard error; it never carries a
 // secret: do not log one.
 func Dial(r io.Reader, w io.Writer, logger *log.Logger) *Conn {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
 	}
-	c := &Conn{w: w, log: logger, pending: map[int64]chan frame{}, out: make(chan Message)}
-	c.cond = sync.NewCond(&c.qmu)
-	go c.read(r)
-	go c.pump()
+	c := &Conn{
+		r: bufio.NewReaderSize(r, 64<<10), w: w, log: logger,
+		waiting: map[int64]bool{}, answers: map[int64]frame{},
+	}
+	c.cond = sync.NewCond(&c.mu)
 	return c
 }
 
-// Messages delivers events and invokes in order. It is closed when the
-// channel ends: Sona closed the add-on's input, which an add-on must treat
-// as the end of its run.
-func (c *Conn) Messages() <-chan Message { return c.out }
-
-func (c *Conn) read(r io.Reader) {
-	br := bufio.NewReaderSize(r, 64<<10)
-	for {
-		line, err := readLine(br)
-		if len(bytes.TrimSpace(line)) > 0 {
-			c.dispatch(line)
-		}
-		if err != nil {
-			break
-		}
-	}
+// Next returns the next event or invoke, waiting for it. It returns false
+// when the channel has ended: Sona closed the add-on's input, which an
+// add-on must treat as the end of its run.
+func (c *Conn) Next() (Message, bool) {
 	c.mu.Lock()
-	c.closed = true
-	for id, ch := range c.pending {
-		close(ch)
-		delete(c.pending, id)
+	defer c.mu.Unlock()
+	for {
+		if len(c.queue) > 0 {
+			m := c.queue[0]
+			c.queue[0] = Message{}
+			c.queue = c.queue[1:]
+			return m, true
+		}
+		if c.closed {
+			return Message{}, false
+		}
+		c.wait()
 	}
+}
+
+// wait, with c.mu held, either reads one frame or, when another goroutine is
+// reading, waits until something changes.
+func (c *Conn) wait() {
+	if c.reading {
+		c.cond.Wait()
+		return
+	}
+	c.reading = true
 	c.mu.Unlock()
-	c.qmu.Lock()
-	c.done = true
-	c.qmu.Unlock()
+	line, err := readLine(c.r)
+	c.mu.Lock()
+	c.reading = false
+	if len(bytes.TrimSpace(line)) > 0 {
+		c.dispatch(line)
+	}
+	if err != nil {
+		if !errors.Is(err, io.EOF) {
+			c.log.Printf("the channel ended: %v", err)
+		}
+		c.closed = true
+	}
 	c.cond.Broadcast()
 }
 
@@ -226,6 +244,7 @@ func readLine(br *bufio.Reader) ([]byte, error) {
 	}
 }
 
+// dispatch files one frame, with c.mu held.
 func (c *Conn) dispatch(line []byte) {
 	var f frame
 	if err := json.Unmarshal(line, &f); err != nil {
@@ -243,45 +262,16 @@ func (c *Conn) dispatch(line []byte) {
 			_ = c.send(response{ID: *f.ID, Error: &Error{Code: "bad_arguments", Message: "bad invoke"}})
 			return
 		}
-		c.push(Message{Invoke: &Invoke{Action: p.Action, Target: p.Target, DeadlineMs: p.DeadlineMs, id: *f.ID, c: c}})
+		c.queue = append(c.queue, Message{Invoke: &Invoke{Action: p.Action, Target: p.Target, DeadlineMs: p.DeadlineMs, id: *f.ID, c: c}})
 	case f.ID != nil && f.Method != "":
 		_ = c.send(response{ID: *f.ID, Error: &Error{Code: "unknown_method", Message: "unknown method"}})
 	case f.ID != nil:
-		c.mu.Lock()
-		ch := c.pending[*f.ID]
-		delete(c.pending, *f.ID)
-		c.mu.Unlock()
-		if ch != nil {
-			ch <- f // buffered: the waiter may have given up
+		if c.waiting[*f.ID] {
+			delete(c.waiting, *f.ID)
+			c.answers[*f.ID] = f
 		}
 	case f.Event != "":
-		c.push(Message{Event: f.Event, Data: f.Data})
-	}
-}
-
-func (c *Conn) push(m Message) {
-	c.qmu.Lock()
-	c.queue = append(c.queue, m)
-	c.qmu.Unlock()
-	c.cond.Signal()
-}
-
-func (c *Conn) pump() {
-	defer close(c.out)
-	for {
-		c.qmu.Lock()
-		for len(c.queue) == 0 && !c.done {
-			c.cond.Wait()
-		}
-		if len(c.queue) == 0 {
-			c.qmu.Unlock()
-			return
-		}
-		m := c.queue[0]
-		c.queue[0] = Message{}
-		c.queue = c.queue[1:]
-		c.qmu.Unlock()
-		c.out <- m
+		c.queue = append(c.queue, Message{Event: f.Event, Data: f.Data})
 	}
 }
 
@@ -298,7 +288,9 @@ func (c *Conn) send(v any) error {
 }
 
 // Request sends a request and waits for its answer, decoding the result into
-// result (which may be nil). An error frame comes back as *Error.
+// result (which may be nil). An error frame comes back as *Error. The wait
+// reads standard input, which ctx cannot interrupt: ctx is checked between
+// frames.
 func (c *Conn) Request(ctx context.Context, method string, params, result any) error {
 	c.mu.Lock()
 	if c.closed {
@@ -307,35 +299,38 @@ func (c *Conn) Request(ctx context.Context, method string, params, result any) e
 	}
 	c.next++
 	id := c.next
-	ch := make(chan frame, 1)
-	c.pending[id] = ch
+	c.waiting[id] = true
 	c.mu.Unlock()
 
 	if err := c.send(request{ID: id, Method: method, Params: params}); err != nil {
-		c.forget(id)
+		c.mu.Lock()
+		delete(c.waiting, id)
+		c.mu.Unlock()
 		return err
 	}
-	select {
-	case f, ok := <-ch:
-		switch {
-		case !ok:
-			return ErrClosed
-		case f.Error != nil:
-			return f.Error
-		case result != nil:
-			return json.Unmarshal(f.Result, result)
-		}
-		return nil
-	case <-ctx.Done():
-		c.forget(id)
-		return ctx.Err()
-	}
-}
-
-func (c *Conn) forget(id int64) {
 	c.mu.Lock()
-	delete(c.pending, id)
-	c.mu.Unlock()
+	defer c.mu.Unlock()
+	for {
+		if f, ok := c.answers[id]; ok {
+			delete(c.answers, id)
+			switch {
+			case f.Error != nil:
+				return f.Error
+			case result != nil:
+				return json.Unmarshal(f.Result, result)
+			}
+			return nil
+		}
+		if c.closed {
+			delete(c.waiting, id)
+			return ErrClosed
+		}
+		if err := ctx.Err(); err != nil {
+			delete(c.waiting, id)
+			return err
+		}
+		c.wait()
+	}
 }
 
 // Hello must be the first request. permissions are what the add-on asks for

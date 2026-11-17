@@ -95,7 +95,11 @@ func run(in io.Reader, out io.Writer, logger *log.Logger, client *http.Client) e
 	logger.Print("ready")
 
 	last := ""
-	for m := range c.Messages() {
+	for {
+		m, ok := c.Next()
+		if !ok {
+			break
+		}
 		switch m.Event {
 		case "shutdown":
 			return nil

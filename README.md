@@ -18,7 +18,7 @@ Each asks only for the permissions it needs, keeps any file it writes under the 
 A folder with an `addon.json` and a program. Sona starts the program, talks to it as one JSON object per line over its standard input and output, and stops it when you turn it off or quit.
 
 - **Permissions.** The manifest lists what the add-on asks for (`playback.read`, `network`…). Turning the add-on on shows them, and nothing runs until you approve. Revoke one and the add-on's next call is refused.
-- **The sandbox.** An add-on runs as you, inside a sandbox: it can read its own folder and the libraries a program needs, write only its private data folder (`SONA_ADDON_DATA`), and reach the internet only with the `network` permission. The details, and what each platform enforces, are in [`docs/addons.md`](https://github.com/coredev-uk/sona-go/blob/main/docs/addons.md) and Sona's `docs/security-review.md`.
+- **The sandbox.** Sona runs an add-on as you, and is putting it in an OS sandbox: it can read its own folder and the libraries a program needs, write only its private data folder (the path in `SONA_ADDON_DATA`), and reach the internet only with the `network` permission. Until the sandbox is enforced on your system, permissions limit what Sona's protocol hands the add-on, not the process itself. What each platform enforces is in [`docs/addons.md`](https://github.com/coredev-uk/sona-go/blob/main/docs/addons.md) and Sona's `docs/security-review.md`.
 - **Privacy.** An add-on never hears a private listen or a 30-second preview: for those, Sona says nothing is playing.
 - Only run an add-on whose code you trust, as you would any program.
 

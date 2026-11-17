@@ -56,7 +56,7 @@ func TestHelloAndErrors(t *testing.T) {
 	}
 }
 
-func TestMessagesInOrderThenClosed(t *testing.T) {
+func TestNextInOrderThenClosed(t *testing.T) {
 	c, out, in := pair(t)
 	answers := make(chan map[string]any, 2)
 	go func() {
@@ -72,7 +72,11 @@ func TestMessagesInOrderThenClosed(t *testing.T) {
 		in.Close()
 	}()
 	var names []string
-	for m := range c.Messages() {
+	for {
+		m, ok := c.Next()
+		if !ok {
+			break
+		}
 		if m.Invoke != nil {
 			names = append(names, m.Invoke.Action+" "+m.Invoke.Target.ID)
 			if err := m.Invoke.Reply(InvokeResult{Toast: "hi"}); err != nil {
@@ -115,7 +119,7 @@ func TestLongFrame(t *testing.T) {
 		io.WriteString(in, `{"event":"queue","data":"`+strings.Repeat("a", 900<<10)+`"}`+"\n")
 		in.Close()
 	}()
-	m, ok := <-c.Messages()
+	m, ok := c.Next()
 	if !ok || m.Event != "queue" || len(m.Data) < 900<<10 {
 		t.Fatalf("long frame: %v %d", ok, len(m.Data))
 	}

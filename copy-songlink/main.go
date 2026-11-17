@@ -58,7 +58,11 @@ func run(in io.Reader, out io.Writer, logger *log.Logger) error {
 	logger.Print("ready")
 
 	country := ""
-	for m := range c.Messages() {
+	for {
+		m, ok := c.Next()
+		if !ok {
+			break
+		}
 		switch {
 		case m.Event == "shutdown":
 			return nil
