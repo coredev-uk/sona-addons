@@ -1,0 +1,25 @@
+{
+  "id": "home-assistant-bridge",
+  "name": "Home Assistant bridge",
+  "version": "1.0.0",
+  "description": "Shows what Sona plays in Home Assistant, as a media player entity. Read-only.",
+  "command": "bin/home-assistant-bridge",
+  "permissions": ["playback.read", "network"],
+  "contributions": {
+    "settings": [
+      {"id": "url", "kind": "text", "label": "Home Assistant address", "description": "Its base address, such as http://homeassistant.local:8123. Empty publishes nothing."},
+      {"id": "token", "kind": "secret", "label": "Long-lived access token", "description": "Create one in your Home Assistant profile, under Security."},
+      {"id": "entity", "kind": "text", "label": "Entity", "description": "The entity to publish, media_player.sona unless you change it.", "default": "media_player.sona"}
+    ]
+  },
+  "strings": {
+    "de": {
+      "setting.url": "Home-Assistant-Adresse",
+      "setting.url.description": "Die Basisadresse, etwa http://homeassistant.local:8123. Leer veröffentlicht nichts.",
+      "setting.token": "Langlebiges Zugriffstoken",
+      "setting.token.description": "In deinem Home-Assistant-Profil unter Sicherheit erstellen.",
+      "setting.entity": "Entität",
+      "setting.entity.description": "Die Entität, die veröffentlicht wird: media_player.sona, wenn du nichts änderst."
+    }
+  }
+}

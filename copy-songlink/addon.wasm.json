@@ -1,0 +1,24 @@
+{
+  "id": "copy-songlink",
+  "name": "Share links",
+  "version": "1.0.0",
+  "description": "Gets the song.link address of a song or an album, to share with people who use another service.",
+  "runtime": "wasm",
+  "command": "copy-songlink.wasm",
+  "permissions": [],
+  "contributions": {
+    "actions": [
+      {"id": "get", "label": "Get song.link", "kinds": ["song", "album"], "icon": "share"}
+    ],
+    "settings": [
+      {"id": "storefront", "kind": "text", "label": "Country", "description": "Two letters, such as gb or us. Empty lets song.link choose."}
+    ]
+  },
+  "strings": {
+    "de": {
+      "action.get": "song.link holen",
+      "setting.storefront": "Land",
+      "setting.storefront.description": "Zwei Buchstaben, etwa de oder us. Leer lässt song.link wählen."
+    }
+  }
+}

@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go samples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      # make test builds every Go sample natively and copy-songlink for
+      # GOOS=wasip1 GOARCH=wasm, runs vet and the tests under -race, and
+      # validates every built folder's addon.json.
+      - run: make test
+      - name: The wasm build is a WebAssembly module
+        run: test "$(head -c 4 dist/wasm/copy-songlink/copy-songlink.wasm | tail -c 3)" = asm
+
+  scripts:
+    name: Python and shell
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: ruff
+        run: pipx run ruff==0.9.10 check reference-client
+      - run: python3 -m py_compile reference-client/addon.py
+      - name: shellcheck
+        run: find . -name '*.sh' -not -path './.git/*' -print0 | xargs -0 --no-run-if-empty shellcheck

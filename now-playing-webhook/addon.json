@@ -1,0 +1,22 @@
+{
+  "id": "now-playing-webhook",
+  "name": "Now playing webhook",
+  "version": "1.0.0",
+  "description": "Posts the song that starts to a web address of yours, as JSON.",
+  "command": "bin/now-playing-webhook",
+  "permissions": ["playback.read", "network"],
+  "contributions": {
+    "settings": [
+      {"id": "url", "kind": "text", "label": "Web address", "description": "Where each song is posted, an http or https address. Empty sends nothing."},
+      {"id": "token", "kind": "secret", "label": "Access token", "description": "Optional. Sent as a Bearer token with each post."}
+    ]
+  },
+  "strings": {
+    "de": {
+      "setting.url": "Webadresse",
+      "setting.url.description": "Wohin jedes Lied gesendet wird, eine http- oder https-Adresse. Leer sendet nichts.",
+      "setting.token": "Zugriffstoken",
+      "setting.token.description": "Optional. Wird bei jedem Senden als Bearer-Token mitgeschickt."
+    }
+  }
+}

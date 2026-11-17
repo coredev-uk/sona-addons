@@ -1,0 +1,13 @@
+{
+  "id": "reference-client",
+  "name": "Reference client",
+  "version": "1.0.0",
+  "description": "A small Python client of Sona's add-on protocol: logs what it receives and shows a call.",
+  "command": "addon.py",
+  "permissions": ["playback.read"],
+  "contributions": {
+    "commands": [
+      {"id": "status", "label": "Log Sona's status", "keywords": "reference call"}
+    ]
+  }
+}
